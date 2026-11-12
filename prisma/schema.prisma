@@ -1,0 +1,520 @@
+// Embassy of the Republic of Higeria – Digital Services Portal (demonstration)
+// PostgreSQL + Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  APPLICANT
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum ApplicationType {
+  PASSPORT
+  VISA
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  PAYMENT_PENDING
+  PAYMENT_CONFIRMED
+  UNDER_REVIEW
+  ADDITIONAL_DOCUMENTS_REQUIRED
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum DocumentStatus {
+  ACTIVE
+  REPLACED
+  DELETED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELED
+  EXPIRED
+  REFUNDED
+}
+
+enum AnnouncementCategory {
+  EMBASSY_NEWS
+  CONSULAR_ANNOUNCEMENTS
+  VISA_UPDATES
+  PASSPORT_UPDATES
+  GOVERNMENT_NOTICES
+  COMMUNITY_EVENTS
+}
+
+enum FaqCategory {
+  PASSPORT
+  VISA
+  DOCUMENTS
+  FEES
+  PROCESSING_TIMES
+  PAYMENTS
+  APPOINTMENTS
+  CONSULAR
+  GENERAL
+}
+
+enum InquiryStatus {
+  NEW
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+// ───────────────────────────── Identity ─────────────────────────────
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  passwordHash     String
+  firstName        String
+  lastName         String
+  phone            String?
+  role             Role      @default(APPLICANT)
+  /// Fine-grained permissions for STAFF (see src/lib/rbac.js). ADMIN/SUPER_ADMIN get all by role.
+  permissions      String[]  @default([])
+  active           Boolean   @default(true)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions          Session[]
+  departments       StaffDepartment[]
+  applications      Application[]       @relation("ApplicantApplications")
+  assignedApps      Application[]       @relation("AssignedApplications")
+  uploadedDocuments Document[]
+  payments          Payment[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  notes             ApplicationNote[]
+  statusChanges     StatusHistory[]
+  announcements     Announcement[]
+
+  @@index([role])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  /// SHA-256 of the session token; the raw token only ever lives in the user's cookie.
+  tokenHash  String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model StaffDepartment {
+  userId       String
+  departmentId String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  @@id([userId, departmentId])
+}
+
+// ───────────────────────────── Offices / Content ─────────────────────────────
+
+model Department {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  shortDescription String
+  description      String
+  responsibilities String[] @default([])
+  services         String[] @default([])
+  email            String?
+  phone            String?
+  officeHours      String?
+  location         String?
+  /// Related forms / links shown on the office page: [{ label, href }]
+  relatedLinks     Json     @default("[]")
+  /// Which application type this office processes (used for staff scoping)
+  handlesType      ApplicationType?
+  /// True until embassy authorities verify this office's information
+  isPlaceholder    Boolean  @default(true)
+  active           Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  staff         StaffDepartment[]
+  faqs          Faq[]
+  announcements Announcement[]
+  inquiries     ContactInquiry[]
+}
+
+model Announcement {
+  id           String               @id @default(cuid())
+  slug         String               @unique
+  title        String
+  summary      String
+  body         String
+  category     AnnouncementCategory
+  imageKey     String?
+  imageAlt     String?
+  published    Boolean              @default(false)
+  publishedAt  DateTime?
+  /// Shown as an "Important notice" on the homepage
+  important    Boolean              @default(false)
+  departmentId String?
+  department   Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  authorId     String?
+  author       User?                @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([published, publishedAt])
+  @@index([category])
+}
+
+model Faq {
+  id           String      @id @default(cuid())
+  question     String
+  answer       String
+  category     FaqCategory @default(GENERAL)
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  published    Boolean     @default(true)
+  sortOrder    Int         @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([category])
+  @@index([departmentId])
+}
+
+/// Key/value site content (homepage text, contact details, office hours, etc.)
+model SiteSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ───────────────────────────── Applications ─────────────────────────────
+
+/// Configurable passport / visa categories, fees and requirements
+model ApplicationCategory {
+  id            String          @id @default(cuid())
+  type          ApplicationType
+  code          String          @unique
+  name          String
+  description   String
+  eligibility   String          @default("")
+  /// Fee in the smallest currency unit (cents)
+  feeCents      Int             @default(0)
+  currency      String          @default("usd")
+  active        Boolean         @default(true)
+  /// True until verified against official embassy policy
+  isPlaceholder Boolean         @default(true)
+  sortOrder     Int             @default(0)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  requirements DocumentRequirement[]
+  serviceFees  ServiceFee[]
+  applications Application[]
+
+  @@index([type, active])
+}
+
+model DocumentRequirement {
+  id           String              @id @default(cuid())
+  categoryId   String
+  category     ApplicationCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  /// Machine key, e.g. PASSPORT_PHOTO, BIO_DATA_PAGE, BIRTH_CERTIFICATE
+  docType      String
+  label        String
+  description  String              @default("")
+  required     Boolean             @default(true)
+  /// Subset of: image/jpeg, image/png, application/pdf
+  acceptedMime String[]            @default(["image/jpeg", "image/png", "application/pdf"])
+  maxSizeMb    Int                 @default(5)
+  sortOrder    Int                 @default(0)
+
+  @@unique([categoryId, docType])
+}
+
+/// Other configurable consular service fees, added to the category fee at checkout
+model ServiceFee {
+  id         String               @id @default(cuid())
+  name       String
+  description String              @default("")
+  amountCents Int
+  currency   String               @default("usd")
+  /// Applies to every category of this type when categoryId is null
+  appliesTo  ApplicationType?
+  categoryId String?
+  category   ApplicationCategory? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  active     Boolean              @default(true)
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+}
+
+model Application {
+  id              String              @id @default(cuid())
+  /// Human-facing reference, assigned on submission: e.g. HGR-P-2026-7K3QX9
+  referenceNumber String?             @unique
+  type            ApplicationType
+  status          ApplicationStatus   @default(DRAFT)
+  categoryId      String
+  category        ApplicationCategory @relation(fields: [categoryId], references: [id])
+  applicantId     String
+  applicant       User                @relation("ApplicantApplications", fields: [applicantId], references: [id], onDelete: Restrict)
+  assignedToId    String?
+  assignedTo      User?               @relation("AssignedApplications", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  /// Complete form payload (validated with the Zod schema for the type)
+  formData        Json                @default("{}")
+
+  // Denormalised fields for search, verification and listing
+  firstName       String?
+  lastName        String?
+  email           String?
+  dateOfBirth     DateTime?           @db.Date
+  nationality     String?
+
+  submittedAt     DateTime?
+  decidedAt       DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  passportDetails  PassportDetails?
+  visaDetails      VisaDetails?
+  documents        Document[]
+  payments         Payment[]
+  statusHistory    StatusHistory[]
+  notes            ApplicationNote[]
+  documentRequests DocumentRequest[]
+
+  @@index([applicantId])
+  @@index([type, status])
+  @@index([status])
+  @@index([lastName])
+  @@index([submittedAt])
+}
+
+model PassportDetails {
+  applicationId          String      @id
+  application            Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  previousPassportNumber String?
+  placeOfBirth           String?
+  citizenshipBasis       String?
+  countryOfResidence     String?
+}
+
+model VisaDetails {
+  applicationId    String      @id
+  application      Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  passportNumber   String?
+  passportCountry  String?
+  passportExpiry   DateTime?   @db.Date
+  travelPurpose    String?
+  arrivalDate      DateTime?   @db.Date
+  departureDate    DateTime?   @db.Date
+  entries          String?
+}
+
+model Document {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   Application    @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  uploadedById  String
+  uploadedBy    User           @relation(fields: [uploadedById], references: [id])
+  docType       String
+  originalName  String
+  /// Opaque key in private storage – never a public URL
+  storageKey    String         @unique
+  mimeType      String
+  sizeBytes     Int
+  sha256        String
+  status        DocumentStatus @default(ACTIVE)
+  createdAt     DateTime       @default(now())
+
+  @@index([applicationId, docType, status])
+}
+
+model DocumentRequest {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  message       String
+  docTypes      String[]    @default([])
+  requestedById String?
+  resolvedAt    DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId])
+}
+
+model StatusHistory {
+  id            String             @id @default(cuid())
+  applicationId String
+  application   Application        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  /// Message visible to the applicant (optional)
+  publicNote    String?
+  changedById   String?
+  changedBy     User?              @relation(fields: [changedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime           @default(now())
+
+  @@index([applicationId, createdAt])
+}
+
+model ApplicationNote {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  authorId      String
+  author        User        @relation(fields: [authorId], references: [id])
+  body          String
+  createdAt     DateTime    @default(now())
+
+  @@index([applicationId])
+}
+
+// ───────────────────────────── Payments ─────────────────────────────
+
+model Payment {
+  id                      String        @id @default(cuid())
+  applicationId           String
+  application             Application   @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  userId                  String
+  user                    User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  amountCents             Int
+  currency                String
+  status                  PaymentStatus @default(PENDING)
+  /// [{ name, amountCents }] — computed server-side at checkout time
+  lineItems               Json
+  stripeCheckoutSessionId String?       @unique
+  stripePaymentIntentId   String?       @unique
+  /// Issued only after webhook-confirmed success: e.g. RCPT-2026-000123
+  receiptNumber           String?       @unique
+  failureReason           String?
+  paidAt                  DateTime?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  transactions PaymentTransaction[]
+
+  @@index([applicationId])
+  @@index([userId])
+  @@index([status, createdAt])
+}
+
+/// Append-only log of payment events received from Stripe
+model PaymentTransaction {
+  id            String   @id @default(cuid())
+  paymentId     String
+  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  stripeEventId String
+  eventType     String
+  amountCents   Int?
+  status        String
+  createdAt     DateTime @default(now())
+
+  @@index([paymentId])
+}
+
+/// Idempotency guard: every processed Stripe event id is recorded exactly once
+model StripeEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
+}
+
+// ───────────────────────────── Communication ─────────────────────────────
+
+model ContactInquiry {
+  id           String        @id @default(cuid())
+  name         String
+  email        String
+  phone        String?
+  subject      String
+  message      String
+  departmentId String?
+  department   Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  status       InquiryStatus @default(NEW)
+  internalNote String?
+  ip           String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([status, createdAt])
+  @@index([departmentId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+// ───────────────────────────── Security ─────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+/// Private file storage for STORAGE_DRIVER=database (small deployments without S3).
+/// Contents are only ever served through signed, expiring links.
+model StoredFile {
+  key         String   @id
+  data        Bytes
+  contentType String
+  size        Int
+  createdAt   DateTime @default(now())
+}
+
+/// Fixed-window rate-limit counters (shared across serverless instances)
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+}

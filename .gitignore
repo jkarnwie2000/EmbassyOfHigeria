@@ -1,0 +1,20 @@
+/node_modules/
+/.next/
+/out/
+/coverage/
+*.log
+.DS_Store
+
+# Environment / secrets — never commit (only the documented template is tracked)
+.env*
+!/.env.example
+
+# Vercel project link
+/.vercel/
+
+# Private uploaded documents (local storage driver) and local database data.
+# Root-anchored so that src/lib/storage (source code) is NOT ignored.
+/storage/
+/.local-postgres/
+/.test-postgres/
+/.test-storage/
