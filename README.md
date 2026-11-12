@@ -9,8 +9,68 @@
 **Live demo:** https://embassy-of-higeria.vercel.app (Vercel + Neon PostgreSQL, Stripe test mode,
 `STORAGE_DRIVER=database`, `UPLOAD_MAX_MB=4`).
 
-A full-stack Next.js application for passport and visa applications, secure document uploads,
-Stripe payments, applicant accounts, and an Embassy administration dashboard with role-based access.
+## About this project
+
+Embassy of Higeria is a full-stack demonstration of a digital services portal for an embassy. The
+Republic of Higeria is a fictional country invented for this project, with its own original flag and a
+teal, coral and ivory colour scheme, so the platform can be shown publicly without impersonating any
+real government.
+
+The portal recreates the main jobs an embassy website performs. Citizens can apply for a first-time,
+renewal or replacement passport, and visitors can apply for tourist, business, transit, diplomatic,
+official or multiple-entry visas. Each application is a guided, multi-step form that saves drafts
+automatically, validates every field in both the browser and on the server, and ends with a review page
+and a unique reference number. Applicants upload photographs and supporting documents with progress
+bars and previews, pay fees through Stripe Checkout, download PDF receipts, and follow their
+application’s progress from a personal dashboard or a public tracking page.
+
+Embassy staff work in a separate administration dashboard. They search and filter applications, open
+documents through links that expire after five minutes, move applications through a defined review
+workflow, request additional documents and keep internal notes. Administrators manage office pages,
+news, FAQs, homepage content, fees and document requirements without touching code, and create staff
+accounts whose permissions are limited by role and by office. Every sensitive action is written to an
+audit log.
+
+Security was a core requirement. Payments are confirmed only by
+signature-verified Stripe webhooks that cannot be processed twice. Uploaded files are checked by
+their actual content, PDFs containing scripts are rejected, and documents are never stored at a public
+address. Sessions are stored as hashes, sign-in attempts are rate-limited, and every state-changing
+request is protected against cross-site request forgery.
+
+The application is built with Next.js 15, React 19 and Tailwind CSS, uses PostgreSQL with Prisma for
+data and Stripe for payments, and is deployed on Vercel with a Neon database. It follows WCAG 2.2 AA
+accessibility practices, works on phones, tablets and desktops, and is covered by 35 automated
+integration tests that run against a real PostgreSQL database. All official-looking content is clearly
+labelled placeholder material.
+
+## Screenshots
+
+> Captured from the live demo. Applicant data shown belongs to test accounts; any other applicant’s
+> details are blurred.
+
+| Homepage | Homepage on a phone |
+|---|---|
+| <img src="docs/screenshots/home.png" alt="Homepage with the embassy illustration, service buttons and the Higeria flag" width="560"> | <img src="docs/screenshots/home-mobile.png" alt="Homepage on a mobile phone" width="230"> |
+
+| Visa services, fees and required documents | Embassy office page |
+|---|---|
+| <img src="docs/screenshots/visa-services.png" alt="Visa categories with fees and document requirements" width="420"> | <img src="docs/screenshots/office-page.png" alt="Consular Affairs office page with services, contacts and inquiry form" width="420"> |
+
+| Multi-step application form | Applicant dashboard |
+|---|---|
+| <img src="docs/screenshots/application-wizard.png" alt="Passport application wizard, personal information step" width="420"> | <img src="docs/screenshots/applicant-dashboard.png" alt="Applicant dashboard listing applications and actions needed" width="420"> |
+
+| Public application tracking | Admin overview |
+|---|---|
+| <img src="docs/screenshots/track.png" alt="Application tracking form" width="420"> | <img src="docs/screenshots/admin-overview.png" alt="Administration overview with statistics and recent submissions" width="420"> |
+
+| Admin application search | Admin application review |
+|---|---|
+| <img src="docs/screenshots/admin-applications.png" alt="Admin list of applications with search and filters" width="420"> | <img src="docs/screenshots/admin-review.png" alt="Admin review page with status update, payments and history" width="420"> |
+
+| Admin services, fees and requirements |
+|---|
+| <img src="docs/screenshots/admin-services.png" alt="Admin page for configuring application categories, fees and required documents" width="560"> |
 
 ---
 
